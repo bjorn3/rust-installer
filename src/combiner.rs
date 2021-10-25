@@ -7,6 +7,7 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use std::io::{Read, Write};
 use std::path::Path;
+use std::path::PathBuf;
 use tar::Archive;
 
 actor! {
@@ -42,11 +43,11 @@ actor! {
 
         /// The directory to do temporary work.
         #[clap(value_name = "DIR")]
-        work_dir: String = "./workdir",
+        work_dir: PathBuf = "./workdir",
 
         /// The location to put the final image and tarball.
         #[clap(value_name = "DIR")]
-        output_dir: String = "./dist",
+        output_dir: PathBuf = "./dist",
 
         /// The formats used to compress the tarball
         #[clap(value_name = "FORMAT", default_value_t)]
@@ -59,7 +60,7 @@ impl Combiner {
     pub fn run(self) -> Result<()> {
         create_dir_all(&self.work_dir)?;
 
-        let package_dir = Path::new(&self.work_dir).join(&self.package_name);
+        let package_dir = self.work_dir.join(&self.package_name);
         if package_dir.exists() {
             remove_dir_all(&package_dir)?;
         }
@@ -67,30 +68,27 @@ impl Combiner {
 
         // Merge each installer into the work directory of the new installer.
         let components = create_new_file(package_dir.join("components"))?;
-        for input_tarball in self
-            .input_tarballs
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
+        for input_tarball in self.input_tarballs.split(',').map(str::trim).filter(|s| !s.is_empty())
         {
             // Extract the input tarballs
             let compression =
                 CompressionFormat::detect_from_path(input_tarball).ok_or_else(|| {
                     anyhow::anyhow!("couldn't figure out the format of {}", input_tarball)
                 })?;
-            Archive::new(compression.decode(input_tarball)?)
-                .unpack(&self.work_dir)
-                .with_context(|| {
+            Archive::new(compression.decode(input_tarball)?).unpack(&self.work_dir).with_context(
+                || {
                     format!(
                         "unable to extract '{}' into '{}'",
-                        &input_tarball, self.work_dir
+                        &input_tarball,
+                        self.work_dir.display()
                     )
-                })?;
+                },
+            )?;
 
             let pkg_name =
                 input_tarball.trim_end_matches(&format!(".tar.{}", compression.extension()));
             let pkg_name = Path::new(pkg_name).file_name().unwrap();
-            let pkg_dir = Path::new(&self.work_dir).join(&pkg_name);
+            let pkg_dir = self.work_dir.join(&pkg_name);
 
             // Verify the version number.
             let mut version = String::new();
@@ -122,12 +120,8 @@ impl Combiner {
 
         // Write the installer version.
         let version = package_dir.join("rust-installer-version");
-        writeln!(
-            create_new_file(version)?,
-            "{}",
-            crate::RUST_INSTALLER_VERSION
-        )
-        .context("failed to write new installer version")?;
+        writeln!(create_new_file(version)?, "{}", crate::RUST_INSTALLER_VERSION)
+            .context("failed to write new installer version")?;
 
         // Copy the overlay.
         if !self.non_installed_overlay.is_empty() {
@@ -147,7 +141,7 @@ impl Combiner {
 
         // Make the tarballs.
         create_dir_all(&self.output_dir)?;
-        let output = Path::new(&self.output_dir).join(&self.package_name);
+        let output = self.output_dir.join(&self.package_name);
         let mut tarballer = Tarballer::default();
         tarballer
             .work_dir(self.work_dir)

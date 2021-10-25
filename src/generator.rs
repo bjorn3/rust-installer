@@ -5,6 +5,7 @@ use crate::util::*;
 use anyhow::{bail, format_err, Context, Result};
 use std::io::Write;
 use std::path::Path;
+use std::path::PathBuf;
 
 actor! {
     #[derive(Debug)]
@@ -43,15 +44,15 @@ actor! {
 
         /// The directory containing the installation medium
         #[clap(value_name = "DIR")]
-        image_dir: String = "./install_image",
+        image_dir: PathBuf = "./install_image",
 
         /// The directory to do temporary work
         #[clap(value_name = "DIR")]
-        work_dir: String = "./workdir",
+        work_dir: PathBuf = "./workdir",
 
         /// The location to put the final image and tarball
         #[clap(value_name = "DIR")]
-        output_dir: String = "./dist",
+        output_dir: PathBuf = "./dist",
 
         /// The formats used to compress the tarball
         #[clap(value_name = "FORMAT", default_value_t)]
@@ -64,7 +65,7 @@ impl Generator {
     pub fn run(self) -> Result<()> {
         create_dir_all(&self.work_dir)?;
 
-        let package_dir = Path::new(&self.work_dir).join(&self.package_name);
+        let package_dir = self.work_dir.join(&self.package_name);
         if package_dir.exists() {
             remove_dir_all(&package_dir)?;
         }
@@ -81,12 +82,8 @@ impl Generator {
 
         // Write the installer version (only used by combine-installers.sh)
         let version = package_dir.join("rust-installer-version");
-        writeln!(
-            create_new_file(version)?,
-            "{}",
-            crate::RUST_INSTALLER_VERSION
-        )
-        .context("failed to write new installer version")?;
+        writeln!(create_new_file(version)?, "{}", crate::RUST_INSTALLER_VERSION)
+            .context("failed to write new installer version")?;
 
         // Copy the overlay
         if !self.non_installed_overlay.is_empty() {
@@ -107,7 +104,7 @@ impl Generator {
 
         // Make the tarballs
         create_dir_all(&self.output_dir)?;
-        let output = Path::new(&self.output_dir).join(&self.package_name);
+        let output = self.output_dir.join(&self.package_name);
         let mut tarballer = Tarballer::default();
         tarballer
             .work_dir(self.work_dir)
@@ -123,32 +120,18 @@ impl Generator {
 /// Copies the `src` directory recursively to `dst`, writing `manifest.in` too.
 fn copy_and_manifest(src: &Path, dst: &Path, bulk_dirs: &str) -> Result<()> {
     let manifest = create_new_file(dst.join("manifest.in"))?;
-    let bulk_dirs: Vec<_> = bulk_dirs
-        .split(',')
-        .filter(|s| !s.is_empty())
-        .map(Path::new)
-        .collect();
+    let bulk_dirs: Vec<_> = bulk_dirs.split(',').filter(|s| !s.is_empty()).map(Path::new).collect();
 
     copy_with_callback(src, dst, |path, file_type| {
         // We need paths to be compatible with both Unix and Windows.
-        if path
-            .components()
-            .filter_map(|c| c.as_os_str().to_str())
-            .any(|s| s.contains('\\'))
-        {
-            bail!(
-                "rust-installer doesn't support '\\' in path components: {:?}",
-                path
-            );
+        if path.components().filter_map(|c| c.as_os_str().to_str()).any(|s| s.contains('\\')) {
+            bail!("rust-installer doesn't support '\\' in path components: {:?}", path);
         }
 
         // Normalize to Unix-style path separators.
         let normalized_string;
         let mut string = path.to_str().ok_or_else(|| {
-            format_err!(
-                "rust-installer doesn't support non-Unicode paths: {:?}",
-                path
-            )
+            format_err!("rust-installer doesn't support non-Unicode paths: {:?}", path)
         })?;
         if string.contains('\\') {
             normalized_string = string.replace('\\', "/");
