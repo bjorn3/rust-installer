@@ -5,7 +5,6 @@ use crate::util::*;
 use anyhow::{bail, format_err, Context, Result};
 use std::io::Write;
 use std::path::Path;
-use std::path::PathBuf;
 
 actor! {
     #[derive(Debug)]
@@ -44,15 +43,15 @@ actor! {
 
         /// The directory containing the installation medium
         #[clap(value_name = "DIR")]
-        image_dir: PathBuf = "./install_image",
+        image_dir: LongPath = "./install_image",
 
         /// The directory to do temporary work
         #[clap(value_name = "DIR")]
-        work_dir: PathBuf = "./workdir",
+        work_dir: LongPath = "./workdir",
 
         /// The location to put the final image and tarball
         #[clap(value_name = "DIR")]
-        output_dir: PathBuf = "./dist",
+        output_dir: LongPath = "./dist",
 
         /// The formats used to compress the tarball
         #[clap(value_name = "FORMAT", default_value_t)]
@@ -63,7 +62,7 @@ actor! {
 impl Generator {
     /// Generates the actual installer tarball
     pub fn run(self) -> Result<()> {
-        create_dir_all(&self.work_dir)?;
+        create_dir_all(&*self.work_dir)?;
 
         let package_dir = self.work_dir.join(&self.package_name);
         if package_dir.exists() {
@@ -103,7 +102,7 @@ impl Generator {
         scripter.run()?;
 
         // Make the tarballs
-        create_dir_all(&self.output_dir)?;
+        create_dir_all(&*self.output_dir)?;
         let output = self.output_dir.join(&self.package_name);
         let mut tarballer = Tarballer::default();
         tarballer

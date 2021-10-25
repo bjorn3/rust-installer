@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use std::fs::{read_link, symlink_metadata};
 use std::io::{empty, BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tar::{Builder, Header};
 use walkdir::WalkDir;
 
@@ -23,7 +23,7 @@ actor! {
 
         /// The folder in which the input is to be found.
         #[clap(value_name = "DIR")]
-        work_dir: PathBuf = "./workdir",
+        work_dir: LongPath = "./workdir",
 
         /// The formats used to compress the tarball.
         #[clap(value_name = "FORMAT", default_value_t)]

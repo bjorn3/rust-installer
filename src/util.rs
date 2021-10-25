@@ -1,6 +1,9 @@
 use anyhow::{format_err, Context, Result};
+use std::convert::Infallible;
 use std::fs;
-use std::path::Path;
+use std::ops::Deref;
+use std::path::{Component, Path, PathBuf, Prefix};
+use std::str::FromStr;
 use walkdir::WalkDir;
 
 // Needed to set the script mode to executable.
@@ -15,8 +18,7 @@ use std::os::windows::fs::symlink_file;
 
 /// Converts a `&Path` to a UTF-8 `&str`.
 pub fn path_to_str(path: &Path) -> Result<&str> {
-    path.to_str()
-        .ok_or_else(|| format_err!("path is not valid UTF-8 '{}'", path.display()))
+    path.to_str().ok_or_else(|| format_err!("path is not valid UTF-8 '{}'", path.display()))
 }
 
 /// Wraps `fs::copy` with a nicer error message.
@@ -148,6 +150,89 @@ macro_rules! actor_field_default {
 }
 
 /// Creates an "actor" with default values, setters for all fields, and Clap parser support.
+fn normalize_rest(path: PathBuf) -> PathBuf {
+    let mut new_components = vec![];
+    for component in path.components().skip(1) {
+        match component {
+            Component::Prefix(_) => unreachable!(),
+            Component::RootDir => new_components.clear(),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                new_components.pop();
+            }
+            Component::Normal(component) => new_components.push(component),
+        }
+    }
+    new_components.into_iter().collect()
+}
+
+#[derive(Debug)]
+pub struct LongPath(PathBuf);
+
+impl LongPath {
+    pub fn new(path: PathBuf) -> Self {
+        let path = if cfg!(windows) {
+            match path.components().next().unwrap() {
+                Component::Prefix(prefix_component) => {
+                    match prefix_component.kind() {
+                        Prefix::Verbatim(_)
+                        | Prefix::VerbatimUNC(_, _)
+                        | Prefix::VerbatimDisk(_) => {
+                            // Already a verbatim path.
+                            path
+                        }
+
+                        Prefix::DeviceNS(dev) => {
+                            Path::new("\\\\?\\").join(dev).join(normalize_rest(path))
+                        }
+                        Prefix::UNC(host, share) => {
+                            Path::new("\\\\?\\").join(host).join(share).join(normalize_rest(path))
+                        }
+                        Prefix::Disk(_disk) => Path::new("\\\\?\\")
+                            .join(prefix_component.as_os_str())
+                            .join(normalize_rest(path)),
+                    }
+                }
+
+                Component::RootDir
+                | Component::CurDir
+                | Component::ParentDir
+                | Component::Normal(_) => {
+                    return LongPath::new(
+                        std::env::current_dir().expect("failed to get current dir").join(&path),
+                    );
+                }
+            }
+        } else {
+            path
+        };
+        LongPath(path)
+    }
+}
+
+impl Into<LongPath> for &str {
+    fn into(self) -> LongPath {
+        LongPath::new(self.into())
+    }
+}
+
+impl FromStr for LongPath {
+    type Err = Infallible;
+
+    fn from_str(s: &str) -> Result<LongPath, Infallible> {
+        Ok(LongPath::new(s.into()))
+    }
+}
+
+impl Deref for LongPath {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+/// Creates an "actor" with default values and setters for all fields.
 macro_rules! actor {
     ($( #[ $attr:meta ] )+ pub struct $name:ident {
         $( $( #[ $field_attr:meta ] )+ $field:ident : $type:ty $(= $default:tt)*, )*
